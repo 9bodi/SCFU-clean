@@ -1,0 +1,9 @@
+# Environnement virtuel
+venv/
+.env/
+*.pyc
+__pycache__/
+.streamlit/
+.vscode/
+.idea/
+*.log

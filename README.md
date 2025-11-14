@@ -2,6 +2,9 @@
 
 ## About this repo
 
+ACTIVATE VEN : .\venv\Scripts\activate
+
+LAUCH with : streamlit run app_streamlit.py
 ### Description
 
 This repo contains data on 10 matches of broadcast tracking data collected by [SkillCorner](https://skillcorner.com), as well as a dataset on aggregated Physical data at the season level.
