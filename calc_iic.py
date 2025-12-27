@@ -470,14 +470,14 @@ def compute_iic_for_player(
     possession_by_frame: Dict[int, str] = {}
     player_group = None  # home/away selon tracking
 
-    with open(tracking_jsonl, "r", encoding="utf-8") as f:
+    with open(tracking_jsonl, "r", encoding="utf-8", errors="ignore") as f:
         for line in f:
             line = line.strip()
             if not line:
                 continue
             try:
                 obj = json.loads(line)
-            except json.JSONDecodeError:
+            except Exception:
                 continue
             fr = obj.get("frame")
             if fr is None:
@@ -616,12 +616,10 @@ def compute_iic_for_player(
 
         rows.append({
             "frame_start": f0,
-
             "delta_width_pct": delta_width_pct,
             "delta_height_pct": delta_height_pct,
             "delta_compact_pct": delta_comp_pct,
             "delta_team_speed_pct": team_speed_pct,
-
             "pressure_n_r1": n_opp_r1,
             "pressure_n_r2": n_opp_r2,
             "possession_retained": retained,
@@ -629,25 +627,32 @@ def compute_iic_for_player(
 
     out = pd.DataFrame(rows)
 
-    # Summary (clés neutres + params)
     vals_r1 = out["pressure_n_r1"].dropna().to_list() if "pressure_n_r1" in out.columns else []
     vals_r2 = out["pressure_n_r2"].dropna().to_list() if "pressure_n_r2" in out.columns else []
 
     summary = {
         "n_touches": int(len(out)),
-        "possession_retained_rate": float(out["possession_retained"].dropna().mean()) if out.get("possession_retained") is not None and out["possession_retained"].notna().any() else None,
+        "possession_retained_rate": float(out["possession_retained"].dropna().mean())
+        if ("possession_retained" in out.columns and out["possession_retained"].notna().any())
+        else None,
 
-        "delta_width_pct_mean": float(out["delta_width_pct"].dropna().mean()) if out.get("delta_width_pct") is not None and out["delta_width_pct"].notna().any() else None,
-        "delta_height_pct_mean": float(out["delta_height_pct"].dropna().mean()) if out.get("delta_height_pct") is not None and out["delta_height_pct"].notna().any() else None,
-        "delta_compact_pct_mean": float(out["delta_compact_pct"].dropna().mean()) if out.get("delta_compact_pct") is not None and out["delta_compact_pct"].notna().any() else None,
+        "delta_width_pct_mean": float(out["delta_width_pct"].dropna().mean())
+        if ("delta_width_pct" in out.columns and out["delta_width_pct"].notna().any())
+        else None,
+        "delta_height_pct_mean": float(out["delta_height_pct"].dropna().mean())
+        if ("delta_height_pct" in out.columns and out["delta_height_pct"].notna().any())
+        else None,
+        "delta_compact_pct_mean": float(out["delta_compact_pct"].dropna().mean())
+        if ("delta_compact_pct" in out.columns and out["delta_compact_pct"].notna().any())
+        else None,
 
-        "delta_team_speed_pct": float(out["delta_team_speed_pct"].dropna().mean()) if out.get("delta_team_speed_pct") is not None and out["delta_team_speed_pct"].notna().any() else None,
+        "delta_team_speed_pct": float(out["delta_team_speed_pct"].dropna().mean())
+        if ("delta_team_speed_pct" in out.columns and out["delta_team_speed_pct"].notna().any())
+        else None,
 
-        # Pression en ENTIER
         "pressure_n_r1_mean": int(round(mean(vals_r1))) if vals_r1 else None,
         "pressure_n_r2_mean": int(round(mean(vals_r2))) if vals_r2 else None,
 
-        # paramètres utilisés (pour l'UI)
         "pre_s": float(pre_s),
         "post_s_possession": float(post_s_possession),
         "post_s_struct": float(post_s_struct),
@@ -660,3 +665,136 @@ def compute_iic_for_player(
     }
 
     return out, summary
+
+
+# ============================================================
+# 8) DEBUG — pourquoi KPI vides (frames mismatch / mauvais tracking)
+# ============================================================
+def debug_match_alignment(
+    events_csv: str,
+    tracking_jsonl: str,
+    player_id: int,
+    pre_s: float = 1.0,
+    post_s_possession: float = 6.0,
+    post_s_struct: float = 5.0,
+    fps: int = 10,
+    press_t1_s: float = 3.0,
+    press_t2_s: float = 5.0,
+    max_lines: int = 80000,
+):
+    """
+    Retourne des stats pour diagnostiquer:
+    - events frames min/max + n touches
+    - nb frames 'needed'
+    - tracking: nb lignes scannées, min/max frame vues
+    - combien de 'needed frames' trouvées
+    - combien de positions joueurs trouvées
+    """
+    out = {
+        "events_n_touches": None,
+        "events_frame_min": None,
+        "events_frame_max": None,
+        "needed_frames_count": None,
+        "tracking_lines_scanned": 0,
+        "tracking_frame_min": None,
+        "tracking_frame_max": None,
+        "tracking_found_needed_frames": 0,
+        "tracking_found_player_positions_on_needed": 0,
+        "possession_playerid_fields_seen": 0,
+        "note": None,
+    }
+
+    try:
+        df = pd.read_csv(events_csv, low_memory=False)
+    except Exception as e:
+        out["note"] = f"Impossible de lire events_csv: {e}"
+        return out
+
+    touches = extract_touches(df, player_id=int(player_id)).reset_index(drop=True)
+    out["events_n_touches"] = int(len(touches))
+
+    if touches.empty or "frame_start" not in touches.columns:
+        out["note"] = "Aucune touche (ou pas de frame_start) dans events."
+        return out
+
+    frames = touches["frame_start"].astype(int).tolist()
+    out["events_frame_min"] = int(min(frames)) if frames else None
+    out["events_frame_max"] = int(max(frames)) if frames else None
+
+    pre_off = int(float(pre_s) * fps)
+    f_poss = int(float(post_s_possession) * fps)
+    f_struct = int(float(post_s_struct) * fps)
+    f_m3 = int(3.0 * fps)
+    f_p1 = int(float(press_t1_s) * fps)
+    f_p2 = int(float(press_t2_s) * fps)
+    f_p6 = int(6.0 * fps)
+
+    needed = set()
+    for f0 in frames:
+        f0 = int(f0)
+        needed.update([
+            max(0, f0 - pre_off),
+            max(0, f0 - f_m3),
+            f0,
+            f0 + f_p1,
+            f0 + f_p2,
+            f0 + f_p6,
+            f0 + f_poss,
+            f0 + f_struct,
+        ])
+
+    out["needed_frames_count"] = int(len(needed))
+
+    found_needed = 0
+    found_player_pos = 0
+
+    try:
+        with open(tracking_jsonl, "r", encoding="utf-8", errors="ignore") as f:
+            for i, line in enumerate(f):
+                if i >= int(max_lines):
+                    break
+                out["tracking_lines_scanned"] += 1
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except Exception:
+                    continue
+                fr = obj.get("frame")
+                if fr is None:
+                    continue
+
+                fr = int(fr)
+                if out["tracking_frame_min"] is None or fr < out["tracking_frame_min"]:
+                    out["tracking_frame_min"] = fr
+                if out["tracking_frame_max"] is None or fr > out["tracking_frame_max"]:
+                    out["tracking_frame_max"] = fr
+
+                poss = obj.get("possession", {}) or {}
+                if "player_id" in poss:
+                    out["possession_playerid_fields_seen"] += 1
+
+                if fr in needed:
+                    found_needed += 1
+                    plist = obj.get("player_data", []) or []
+                    for p in plist:
+                        if int(p.get("player_id") or -1) == int(player_id):
+                            x = p.get("x")
+                            y = p.get("y")
+                            if x is not None and y is not None:
+                                found_player_pos += 1
+                            break
+    except Exception as e:
+        out["note"] = f"Impossible de lire tracking_jsonl: {e}"
+        return out
+
+    out["tracking_found_needed_frames"] = int(found_needed)
+    out["tracking_found_player_positions_on_needed"] = int(found_player_pos)
+
+    if found_needed == 0:
+        out["note"] = "Si tracking_found_needed_frames == 0 => frames events != tracking (fps/format) ou mauvais fichier tracking."
+    else:
+        out["note"] = "OK: on trouve des frames nécessaires dans le tracking (au moins partiellement)."
+
+    return out
