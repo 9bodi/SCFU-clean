@@ -1,9 +1,22 @@
 # Environnement virtuel
 venv/
 .env/
-*.pyc
+
+# Python
 __pycache__/
+*.pyc
+
+# Streamlit
 .streamlit/
+
+# IDE
 .vscode/
 .idea/
+
+# Data / outputs
+data/
+outputs/
+*.zip
+
+# Logs
 *.log
