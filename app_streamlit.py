@@ -349,14 +349,14 @@ def create_radar_chart(summary, player_name, team_name, post_s_possession, post_
 
 
 # ===================== HEADER =====================
-st.title("Indice d’Apport Collectif (IAC)")
-st.caption("8 indicateurs simples pour lire l’impact collectif d’une touche (avec tracking)")
+st.title("Indice d’Apport Collectif")
+st.caption("Cette app mesure l’impact collectif réel d’un joueur après chacune de ses touches, en combinant événements et tracking pour analyser possession, structure d’équipe et pression adverse.")
 
 # ✅ Crédit visible sous le titre (texte noir)
 st.markdown(
     """
 <div class="credit-card">
-  <b>Crédit données</b> — Initiative open-source conjointe <b>SkillCorner</b> × <b>PySport</b>.
+  <b>Crédit données</b> — Initiative open-source <b>Analytics Cup</b>.
   Merci de créditer <b>SkillCorner</b> et <b>PySport</b> lors de toute utilisation.
 </div>
 """,
